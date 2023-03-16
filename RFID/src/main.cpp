@@ -19,11 +19,14 @@
  *     3V | VCC
  */
 
-//#include <SPI.h>      // für SPI-Schnittstelle
-#include <MFRC522v2.h>  // für den Kartenleser
+// #include <SPI.h>      // für SPI-Schnittstelle
+#include <MFRC522v2.h> // für den Kartenleser
 #include <MFRC522DriverSPI.h>
 #include <MFRC522DriverPinSimple.h>
 #include <MFRC522Debug.h>
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <WiFiClientSecure.h>
 
 #define DEBUG false  // auf true setzen für Debug-Ausgaben
 
@@ -47,6 +50,36 @@ const unsigned long sameCardInterval = 5000;  // Intervall in dem die gleiche Ka
 char lastCard[4];  // Variable für die zuletzt gelesene Karten-ID
 unsigned long lastCardMillis = 0;  // Variable zur Speicherung des Zeitstempels für das sameCardInterval
 
+// forward declarations
+void setup_wifi();
+void callback(String topic, byte *message, unsigned int length);
+void reconnect();
+
+// WiFi-Zugangsdaten
+const char *ssid = "BS-GAST";
+const char *passphrase = "bs2020##";
+
+// MQTT-Serverdaten
+const char *mqtt_server = "mqtt.fachinformatiker.schule";
+const int mqtt_port = 8883; // für eine TLS-verschlüsselte Kommunikation
+const char *mqtt_user = "itt11d";
+const char *mqtt_password = "ZumRegelwidrigenRegen";
+const char *mqtt_client_name = "JayEricRFID"; // beliebig wählbar, muss aber pro Client einmalig sein (wegen Mosquitto); bitte ändern
+
+// Topics für Subscription und eigenes Publishing
+const char *topic_sub = "itt11d/rfid_schranke_sub";
+const char *topic_pub = "itt11d/rfid_schranke_sub";
+
+// Konstanten
+const int pub_interval = 10000; // Intervall für eigene pub-Nachrichten (in ms)
+
+WiFiClientSecure wifi;
+PubSubClient client(wifi);
+
+long now;      // aktuelle Laufzeit
+long last = 0; // Zeitpunkt des letzten MQTT-Publish
+
+int pub_counter = 0; // Zählwert als Inhalt für eigene Publish-Nachrichten
 
 /**
  * setup
@@ -57,26 +90,67 @@ void setup() {
     delay(100);
     pinMode(D8, OUTPUT);  // Buzzer-Pin als Ausgang definieren
 
-    // Serielle Konsole aktivieren und Versionsinfo ausgeben
-    Serial.begin(9600);
-    Serial.println();
-    Serial.println("Version 1.1");
-    MFRC522Debug::PCD_DumpVersionToSerial(mfrc522, Serial);
-    Serial.println("Setup abgeschlossen.");
+  // Serielle Konsole aktivieren und Versionsinfo ausgeben
+  Serial.begin(9600);
+  Serial.println();
+  Serial.println("Version 1.1");
+
+  MFRC522Debug::PCD_DumpVersionToSerial(mfrc522, Serial);
+
+  // Serial
+  delay(100);
+
+  // WiFi
+  setup_wifi();
+
+  // MQTT
+  wifi.setInsecure(); // MQTT-Kommunikation ohne TLS-Zertifikatsvalidierung ermöglichen
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+
+  Serial.println("Setup abgeschlossen.");
 }
 
 
 /**
  * loop
  */
-void loop() {
-    // falls keine Karte erkannt wird oder gelesen werden kann, dann von vorne
-    if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
-        return;
-    } else  // weiter falls Karte gelesen
-    {
-        char thisCard[4];  // Variable für die Karten-UID
-        bool sameAsLastCard = true;  // Variable um zu speichern, ob das eine neue Karte ist
+void loop()
+{
+  if (!client.connected())
+  {
+    // MQTT-Verbindung wieder herstellen
+    reconnect();
+  }
+
+  // regelmäßigen Nachrichtenempfang gewährleisten, false bei Verbindungsabbruch
+  if (!client.loop())
+  {
+    client.connect(mqtt_client_name, mqtt_user, mqtt_password);
+  }
+
+  // non-blocking Timer für eigene Publish-Nachrichten;
+  now = millis();
+  if (millis() - last > pub_interval)
+  {
+    last = now;
+    pub_counter++;
+    client.publish(topic_pub, String(pub_counter).c_str());
+    Serial.print("Publish: ");
+    Serial.print(topic_pub);
+    Serial.print(": ");
+    Serial.println(pub_counter);
+  }
+
+  // falls keine Karte erkannt wird oder gelesen werden kann, dann von vorne
+  if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
+  {
+    return;
+  }
+  else // weiter falls Karte gelesen
+  {
+    char thisCard[4];           // Variable für die Karten-UID
+    bool sameAsLastCard = true; // Variable um zu speichern, ob das eine neue Karte ist
 
 
         // Karten-UID in lokale Variable übertragen und erkennen, ob es eine neue ist
@@ -151,4 +225,78 @@ void loop() {
     }
 
     delay(100);
+}
+
+// Setup Wifi
+
+void setup_wifi()
+{
+  delay(10);
+  Serial.print("WiFi");
+  WiFi.begin(ssid, passphrase);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println(" connected");
+}
+
+/**
+ * callback
+ */
+void callback(String topic, byte *message, unsigned int length)
+{
+  // Callback-Funktion für MQTT-Subscriptions
+  String messageTemp;
+
+  Serial.print("Message arrived on topic: ");
+  Serial.println(topic);
+
+  // Message byteweise verarbeiten und auf Konsole ausgeben
+  for (int i = 0; i < length; i++)
+  {
+    Serial.print((char)message[i]);
+    messageTemp += (char)message[i];
+  }
+  Serial.println();
+
+  // Behandlung bestimmter Topics
+  if (topic == topic_sub)
+  {
+    if (messageTemp == "on")
+    {
+      Serial.print(topic_sub);
+      Serial.println(" steht auf EIN");
+    }
+    else if (messageTemp == "off")
+    {
+      Serial.print(topic_sub);
+      Serial.println(" steht auf AUS");
+    }
+  }
+  /* else if (topic == anderes_topic) { ... } */
+}
+
+/**
+ * reconnect
+ */
+void reconnect()
+{
+  // Wiederverbinden mit dem MQTT-Broker
+  while (!client.connected())
+  {
+    Serial.println("MQTT reconnect");
+    if (client.connect(mqtt_client_name, mqtt_user, mqtt_password))
+    {
+      Serial.println("connected");
+      client.subscribe(topic_sub);
+    }
+    else
+    {
+      Serial.print("failed: ");
+      Serial.println(client.state());
+      delay(5000);
+    }
+  }
 }
