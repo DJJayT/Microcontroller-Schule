@@ -43,7 +43,7 @@ MFRC522 mfrc522{driver};
 //int idleCount = 0;
 
 const char validCards[1][4] = {  // Datenstruktur mit gültigen Karten-IDs
-        {0xF3, 0xDA, 0x1E, 0x19}
+        {0x73, 0xE9, 0x2, 0x19}
 };
 const char nrOfValidCards = sizeof(validCards) / sizeof(validCards[0]);  // Anzahl gültiger Karten
 const unsigned long sameCardInterval = 5000;  // Intervall in dem die gleiche Karte nicht nochmal behandelt werden soll
@@ -67,8 +67,8 @@ const char *mqtt_password = "ZumRegelwidrigenRegen";
 const char *mqtt_client_name = "JayEricRFID"; // beliebig wählbar, muss aber pro Client einmalig sein (wegen Mosquitto); bitte ändern
 
 // Topics für Subscription und eigenes Publishing
-const char *topic_sub = "itt11d/rfid_schranke_sub";
-const char *topic_pub = "itt11d/rfid_schranke_sub";
+const char *topic_sub = "itt11d/JayEricSchranke/karte_id";
+const char *topic_pub = "itt11d/JayEricSchranke/karte_id";
 
 // Konstanten
 const int pub_interval = 10000; // Intervall für eigene pub-Nachrichten (in ms)
@@ -131,7 +131,7 @@ void loop()
 
   // non-blocking Timer für eigene Publish-Nachrichten;
   now = millis();
-  if (millis() - last > pub_interval)
+/*  if (millis() - last > pub_interval)
   {
     last = now;
     pub_counter++;
@@ -140,7 +140,7 @@ void loop()
     Serial.print(topic_pub);
     Serial.print(": ");
     Serial.println(pub_counter);
-  }
+  } */
 
   // falls keine Karte erkannt wird oder gelesen werden kann, dann von vorne
   if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
@@ -190,7 +190,7 @@ void loop()
                     matchesSomeValidCard = true;  // merken, dass diese Karte einer gültigen Karte entspricht
                 }
             }
-
+            client.publish(topic_pub, thisCard);
             // Erkennen einer gültigen oder ungültigen Karte ausgeben
             if (matchesSomeValidCard) {
                 Serial.println("Card is valid");
