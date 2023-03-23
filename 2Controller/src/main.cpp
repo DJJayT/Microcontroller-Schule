@@ -2,10 +2,11 @@
  *
  * Anschlussbelegung:
  * ==================
- * NodeMCU | Schranke
- *      D8 | PWM
- *      5V | SCK
- *     GND | GND
+ *           NodeMCU | Schranke
+ *                D8 | PWM
+ *  5V anderes Board | 5V
+ *               GND | GND
+ *               GND | GND anderes Board
  *
  * NodeMCU | Display
  *    3.3V | VCC
@@ -21,15 +22,22 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <Servo.h>
+#include <Wire.h>
+#include <SSD1306.h>
 #include <OLEDDisplay.h>
 
 // forward declarations
 void setup_wifi();
+
 void callback(String topic, byte *message, unsigned int length);
+
 void reconnect();
 
 void schranke_auf();
+
 void schranke_zu();
+
+void schranke_zu_text();
 
 // WiFi-Zugangsdaten
 const char *ssid = "BS-GAST";
@@ -67,12 +75,17 @@ long since_time_opened = 0;
 long opening_time = 5000;
 bool is_open = false;
 
+long since_access_revoke = 0;
+long access_revoke_time = 5000;
+bool access_revoked = false;
+
 #define SERVO D8  // Servo an Pin D8
 #define SDA_PIN D2  // SDA an D2
 #define SCL_PIN D1  // SCL an D1
 
 const int DISPLAY_ADDR = 0x3c;  // I2C-Addresse des Displays
 
+SSD1306Wire *display;
 //Display-Code muss noch komplett geaddet werden!
 
 
@@ -92,6 +105,22 @@ void setup() {
 
     // Display
     display = new SSD1306Wire(DISPLAY_ADDR, SDA_PIN, SCL_PIN);
+    display->init();
+    display->displayOn();
+    display->flipScreenVertically();
+    display->clear();
+
+    //Servo
+    servo.attach(SERVO, 500, 2400);
+    Serial.begin(115200);
+    servo.write(newpos);
+
+    //Starttext
+    display->setFont(ArialMT_Plain_16);
+    display->drawString(0, 0, "Schranke ist zu!");
+
+    // Anzeige aktualisieren
+    display->display();
 
     // WiFi
     setup_wifi();
@@ -100,10 +129,6 @@ void setup() {
     wifi.setInsecure(); // MQTT-Kommunikation ohne TLS-Zertifikatsvalidierung ermöglichen
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(callback);
-
-    servo.attach(SERVO,500,2400);
-    Serial.begin(115200);
-    servo.write(newpos);
 
     Serial.println("Setup abgeschlossen");
 }
@@ -115,11 +140,14 @@ void setup() {
 void loop() {
     if (!client.connected()) {
         // MQTT-Verbindung wieder herstellen
+        Serial.println(millis());
+        Serial.println("Not connected");
         reconnect();
     }
 
     // regelmäßigen Nachrichtenempfang gewährleisten, false bei Verbindungsabbruch
     if (!client.loop()) {
+        Serial.println("MQTT-Verbindung abgebrochen");
         client.connect(mqtt_client_name, mqtt_user, mqtt_password);
     }
 
@@ -130,19 +158,34 @@ void loop() {
         client.publish(topic_pub, schranken_status);
     }
 
-    if(is_open) {
-        if(millis() - since_time_opened > opening_time) {
-            Serial.println("Schranke schließen");
+    if (is_open) {
+        if (millis() - since_time_opened > opening_time) {
             schranke_zu();
+            schranke_zu_text();
+        } else {
+            display->clear();
+            display->setFont(ArialMT_Plain_16);
+            display->drawString(0, 0, "Schranke ist offen!");
+            display->drawString(0, 30, "Noch " +
+                                       String(((opening_time - (millis() - since_time_opened)) / 1000) + 1) +
+                                       " Sek.");
+            display->display();
+        }
+    } else if(access_revoked) {
+        if(millis() - since_access_revoke > access_revoke_time) {
+            schranke_zu_text();
+            access_revoked = false;
         }
     }
 
-    if(newpos != oldpos) {
-        if(newpos >= 0 && newpos <= 180) {
+    if (newpos != oldpos) {
+        if (newpos >= 0 && newpos <= 180) {
             servo.write(newpos);
             oldpos = newpos;
         }
     }
+
+    delay(50);
 }
 
 /**
@@ -179,13 +222,21 @@ void callback(String topic, byte *message, unsigned int length) {
 
     // Behandlung bestimmter Topics
     if (topic == topic_sub) {
-        if(messageTemp == "true") {
+        Serial.println(messageTemp);
+        if (messageTemp == "true") {
             schranke_auf();
         } else {
             schranke_zu();
+
+            display->clear();
+            display->setFont(ArialMT_Plain_16);
+            display->drawString(0, 0, "Schranke ist zu!");
+            display->drawString(0, 30, "Zutritt verweigert!");
+            display->display();
+            since_access_revoke = millis();
+            access_revoked = true;
         }
     }
-    /* else if (topic == anderes_topic) { ... } */
 }
 
 
@@ -218,4 +269,11 @@ void schranke_zu() {
     newpos = 0;
     schranken_status = "closed";
     is_open = false;
+}
+
+void schranke_zu_text() {
+    display->clear();
+    display->setFont(ArialMT_Plain_16);
+    display->drawString(0, 0, "Schranke ist zu!");
+    display->display();
 }
