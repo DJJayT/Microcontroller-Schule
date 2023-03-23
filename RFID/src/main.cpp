@@ -38,15 +38,7 @@ MFRC522DriverSPI driver{ss_pin, spiClass, spiSettings};
 MFRC522 mfrc522{driver};
 
 
-//byte cardUid[4];  // zum Einlesen der Karten-UID
-//bool readSuccessful = false;
-//int idleCount = 0;
-
-const char validCards[1][4] = {  // Datenstruktur mit gültigen Karten-IDs
-        {0x73, 0xE9, 0x2, 0x19}
-};
-const char nrOfValidCards = sizeof(validCards) / sizeof(validCards[0]);  // Anzahl gültiger Karten
-const unsigned long sameCardInterval = 5000;  // Intervall in dem die gleiche Karte nicht nochmal behandelt werden soll
+const unsigned long sameCardInterval = 500;  // Intervall in dem die gleiche Karte nicht nochmal behandelt werden soll
 char lastCard[4];  // Variable für die zuletzt gelesene Karten-ID
 unsigned long lastCardMillis = 0;  // Variable zur Speicherung des Zeitstempels für das sameCardInterval
 
@@ -67,7 +59,7 @@ const char *mqtt_password = "ZumRegelwidrigenRegen";
 const char *mqtt_client_name = "JayEricRFID"; // beliebig wählbar, muss aber pro Client einmalig sein (wegen Mosquitto); bitte ändern
 
 // Topics für Subscription und eigenes Publishing
-const char *topic_sub = "itt11d/JayEricSchranke/karte_id";
+const char *topic_sub = "itt11d/JayEricSchranke/CardValidation";
 const char *topic_pub = "itt11d/JayEricSchranke/karte_id";
 
 // Konstanten
@@ -131,16 +123,6 @@ void loop()
 
   // non-blocking Timer für eigene Publish-Nachrichten;
   now = millis();
-/*  if (millis() - last > pub_interval)
-  {
-    last = now;
-    pub_counter++;
-    client.publish(topic_pub, String(pub_counter).c_str());
-    Serial.print("Publish: ");
-    Serial.print(topic_pub);
-    Serial.print(": ");
-    Serial.println(pub_counter);
-  } */
 
   // falls keine Karte erkannt wird oder gelesen werden kann, dann von vorne
   if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
@@ -177,45 +159,7 @@ void loop()
             lastCardMillis = millis();  // Zeitstempel für das Widerholungsintervall merken
             Serial.println();
 
-            // alle gültigen Karten durchgehen
-            for (int i = 0; i < nrOfValidCards; i++) {
-                bool matchesThisValidCard = true;  // Variable um zu speichern, ob dieser gültigen entspricht
-                // Karten byteweise vergleichen
-                for (int j = 0; j < 4; j++) {
-                    if (thisCard[j] != validCards[i][j]) {
-                        matchesThisValidCard = false;  // merken, wenn ein Unterschied erkannt wurde
-                    }
-                }
-                if (matchesThisValidCard) {
-                    matchesSomeValidCard = true;  // merken, dass diese Karte einer gültigen Karte entspricht
-                }
-            }
             client.publish(topic_pub, thisCard);
-            // Erkennen einer gültigen oder ungültigen Karte ausgeben
-            if (matchesSomeValidCard) {
-                Serial.println("Card is valid");
-                for (int i = 0; i < 400; i++) {
-                    digitalWrite(D8, HIGH);
-                    delayMicroseconds(300);
-                    digitalWrite(D8, LOW);
-                    delayMicroseconds(300);
-                }
-            } else {
-                Serial.println("Card is NOT valid");
-                for (int i = 0; i < 200; i++) {
-                    digitalWrite(D8, HIGH);
-                    delayMicroseconds(300);
-                    digitalWrite(D8, LOW);
-                    delayMicroseconds(300);
-                }
-                for (int i = 0; i < 300; i++) {
-                    digitalWrite(D8, HIGH);
-                    delayMicroseconds(500);
-                    digitalWrite(D8, LOW);
-                    delayMicroseconds(500);
-                }
-            }
-
         }  // Ende neue Karte
     }  // Ende Karte gelesen
 
@@ -264,16 +208,29 @@ void callback(String topic, byte *message, unsigned int length)
   // Behandlung bestimmter Topics
   if (topic == topic_sub)
   {
-    if (messageTemp == "on")
-    {
-      Serial.print(topic_sub);
-      Serial.println(" steht auf EIN");
-    }
-    else if (messageTemp == "off")
-    {
-      Serial.print(topic_sub);
-      Serial.println(" steht auf AUS");
-    }
+      if (messageTemp == "true") {
+          Serial.println("Card is valid");
+          for (int i = 0; i < 400; i++) {
+              digitalWrite(D8, HIGH);
+              delayMicroseconds(300);
+              digitalWrite(D8, LOW);
+              delayMicroseconds(300);
+          }
+      } else {
+          Serial.println("Card is NOT valid");
+          for (int i = 0; i < 200; i++) {
+              digitalWrite(D8, HIGH);
+              delayMicroseconds(300);
+              digitalWrite(D8, LOW);
+              delayMicroseconds(300);
+          }
+          for (int i = 0; i < 300; i++) {
+              digitalWrite(D8, HIGH);
+              delayMicroseconds(500);
+              digitalWrite(D8, LOW);
+              delayMicroseconds(500);
+          }
+      }
   }
   /* else if (topic == anderes_topic) { ... } */
 }
